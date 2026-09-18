@@ -10,12 +10,13 @@ from datetime import datetime
 
 # ==================== 页面全局配置 ====================
 st.set_page_config(
-    page_title="货件 PCS 计算与汇总工具",
+    page_title="货件 PCS 计算工具",
     page_icon="📦",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# ==================== 路径与配置管理 ====================
+# ==================== 隐藏云端配置（后台直接读取） ====================
 def get_app_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
@@ -52,19 +53,9 @@ def load_columns_config():
     except Exception:
         return DEFAULT_CONFIG
 
-def save_columns_config(cfg):
-    """保存配置到本地 json 文件"""
-    try:
-        with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        return True
-    except Exception as e:
-        st.sidebar.error(f"保存配置失败: {e}")
-        return False
-
 # ==================== AirScript 数据拉取 ====================
 def parse_airscript_response(res_data):
-    """解析并标准化 AirScript 返回的多种数据结构为 DataFrame"""
+    """解析并标准化 AirScript 返回的数据结构为 DataFrame"""
     if isinstance(res_data, dict):
         if "data" in res_data and isinstance(res_data["data"], dict) and "result" in res_data["data"]:
             result = res_data["data"]["result"]
@@ -142,114 +133,64 @@ def to_combined_excel_bytes(df_delivery: pd.DataFrame, df_summary: pd.DataFrame)
         df_summary.to_excel(writer, sheet_name='货件汇总表', index=False)
     return output.getvalue()
 
-# ==================== 主页面交互 ====================
+# ==================== 主界面 ====================
 def main():
-    # 标题部分
     st.title("📦 货件 PCS 计算工具 (在线 Web 版)")
-    st.markdown("上传发货单 Excel 文件，自动拉取金山文档 AirScript 云端采购单数据，匹配品名、单箱数量并计算汇总总 PCS。")
+    st.caption("上传发货单 Excel 文件，自动拉取金山文档 AirScript 云端采购单，匹配品名并计算汇总总 PCS。")
     st.divider()
 
-    # 加载配置
-    cfg = load_columns_config()
-    air_cfg = cfg.get("airscript", DEFAULT_CONFIG["airscript"])
-
-    # 侧边栏：接口与参数配置
-    with st.sidebar:
-        st.header("⚙️ 云端接口配置")
-        webhook_url_input = st.text_input(
-            "AirScript Webhook URL", 
-            value=air_cfg.get("webhook_url", DEFAULT_CONFIG["airscript"]["webhook_url"])
-        )
-        token_input = st.text_input(
-            "AirScript Token", 
-            value=air_cfg.get("token", DEFAULT_CONFIG["airscript"]["token"]), 
-            type="password"
-        )
-        
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
-            if st.button("💾 保存配置", use_container_width=True):
-                cfg["airscript"] = {"webhook_url": webhook_url_input, "token": token_input}
-                if save_columns_config(cfg):
-                    st.success("配置已更新！")
-        
-        with col_btn2:
-            test_clicked = st.button("🔄 测试连接", use_container_width=True)
-
-        if test_clicked:
-            with st.spinner("正在连接云端..."):
-                try:
-                    test_df = fetch_purchase_from_airscript(webhook_url_input, token_input)
-                    st.success(f"✅ 连接成功！共拉取到 {len(test_df)} 条采购单记录。")
-                except Exception as ex:
-                    st.error(f"❌ 连接失败：{str(ex)}")
-
-    # 主体布局：分为两步
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        st.subheader("1. 云端采购单状态")
-        st.info("数据源已配置为金山文档 AirScript Webhook 接口。")
-        pull_online = st.checkbox("处理时实时同步最新采购单数据", value=True)
-
-    with col_right:
-        st.subheader("2. 上传发货单文件")
-        uploaded_file = st.file_uploader("请选择发货单 Excel 文件（.xlsx）", type=["xlsx"])
-
-    # 如果上传了文件，提供前瞻预览
-    delivery_df = None
-    if uploaded_file is not None:
-        try:
-            delivery_df = pd.read_excel(uploaded_file)
-            delivery_df.columns = [str(c).strip() for c in delivery_df.columns]
-            with st.expander("👀 展开查看上传发货单前 5 行预览", expanded=False):
-                st.dataframe(delivery_df.head(5), use_container_width=True)
-        except Exception as e:
-            st.error(f"读取发货单失败: {e}")
+    # 1. 直接展示发货单文件上传区（已隐藏云端状态与侧边栏配置）
+    uploaded_file = st.file_uploader("请选择发货单 Excel 文件（.xlsx）", type=["xlsx"])
 
     st.write("")
-    
-    # 开始处理按钮
     start_btn = st.button("🚀 开始拉取并计算数据", type="primary", use_container_width=True)
 
     if start_btn:
-        if uploaded_file is None or delivery_df is None:
+        if uploaded_file is None:
             st.warning("⚠️ 请先上传发货单 Excel 文件！")
             return
 
-        with st.status("正在进行数据匹配与计算...", expanded=True) as status:
+        with st.status("正在进行数据处理...", expanded=True) as status:
             try:
-                # 步骤 1: 拉取采购单
-                status.update(label="1/5 正在从 AirScript 云端拉取采购单数据...")
-                purchase_df = fetch_purchase_from_airscript(webhook_url_input, token_input)
+                # 获取配置
+                cfg = load_columns_config()
+                air_cfg = cfg.get("airscript", DEFAULT_CONFIG["airscript"])
+                webhook_url = air_cfg.get("webhook_url", DEFAULT_CONFIG["airscript"]["webhook_url"])
+                token = air_cfg.get("token", DEFAULT_CONFIG["airscript"]["token"])
+
+                # 步骤 1: 拉取云端采购单
+                status.update(label="1/4 正在从 AirScript 云端拉取采购单数据...")
+                purchase_df = fetch_purchase_from_airscript(webhook_url, token)
                 purchase_df.columns = [str(c).strip() for c in purchase_df.columns]
 
-                # 兼容品名/中文品名
+                # 智能兼容列名
                 if "中文品名" not in purchase_df.columns and "品名" in purchase_df.columns:
                     purchase_df["中文品名"] = purchase_df["品名"]
                 
-                # 兼容单箱数量/箱规/PCS
                 if "PCS" not in purchase_df.columns:
                     if "单箱数量" in purchase_df.columns:
                         purchase_df["PCS"] = purchase_df["单箱数量"]
                     elif "箱规" in purchase_df.columns:
                         purchase_df["PCS"] = purchase_df["箱规"]
 
-                # 步骤 2: 校验表头字段
-                status.update(label="2/5 正在校验表头字段规范...")
+                # 步骤 2: 读取发货单并校验表头
+                status.update(label="2/4 正在读取发货单并校验字段...")
+                delivery_df = pd.read_excel(uploaded_file)
+                delivery_df.columns = [str(c).strip() for c in delivery_df.columns]
+
                 required_purchase_cols = ["SKU", "中文品名", "PCS"]
                 required_delivery_cols = ["SKU", "发货量", "货件编号"]
 
                 for col in required_purchase_cols:
                     if col not in purchase_df.columns:
-                        raise ValueError(f"云端采购单缺少必需列：【{col}】，请检查在线表格！")
+                        raise ValueError(f"云端采购单缺少必需列：【{col}】")
 
                 for col in required_delivery_cols:
                     if col not in delivery_df.columns:
-                        raise ValueError(f"发货单缺少必需列：【{col}】，请检查 Excel 字段！")
+                        raise ValueError(f"发货单缺少必需列：【{col}】")
 
                 # 步骤 3: 关联匹配
-                status.update(label="3/5 正在按 SKU 进行关联匹配...")
+                status.update(label="3/4 正在按 SKU 进行匹配与计算...")
                 purchase_df["SKU"] = purchase_df["SKU"].astype(str).str.strip()
                 delivery_df["SKU"] = delivery_df["SKU"].astype(str).str.strip()
 
@@ -262,8 +203,7 @@ def main():
                     how="left"
                 )
 
-                # 步骤 4: 数值计算
-                status.update(label="4/5 正在计算总 PCS 及汇总报表...")
+                # 数值转换与计算
                 delivery_updated["PCS"] = pd.to_numeric(delivery_updated["PCS"], errors="coerce").fillna(0)
                 delivery_updated["发货量"] = pd.to_numeric(delivery_updated["发货量"], errors="coerce").fillna(0)
                 delivery_updated["总PCS"] = delivery_updated["发货量"] * delivery_updated["PCS"]
@@ -275,19 +215,15 @@ def main():
 
                 status.update(label="✅ 数据处理完成！", state="complete")
 
-                # 步骤 5: 结果展示与下载
-                st.success("🎉 数据计算与汇总成功！请在下方预览并下载文件。")
+                # 准备 Excel 导出文件
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                # 准备 Excel 字节流
                 file1_bytes = to_excel_bytes(delivery_updated)
                 file2_bytes = to_excel_bytes(summary_data)
                 combined_bytes = to_combined_excel_bytes(delivery_updated, summary_data)
 
-                # 下载区域
+                # 步骤 4: 下载区域
                 st.markdown("### 📥 导出与下载")
                 dl_col1, dl_col2, dl_col3 = st.columns(3)
-                
                 with dl_col1:
                     st.download_button(
                         label="📄 下载更新后发货单 (.xlsx)",
@@ -313,12 +249,24 @@ def main():
                         use_container_width=True
                     )
 
-                # 结果表格展示
-                tab1, tab2 = st.tabs(["📄 已更新发货单明细", "📊 货件汇总表"])
-                with tab1:
-                    st.dataframe(delivery_updated, use_container_width=True)
-                with tab2:
-                    st.dataframe(summary_data, use_container_width=True)
+                # 步骤 5: 仅在检测到 PCS 为 0 时才显示数据表格
+                zero_pcs_df = delivery_updated[delivery_updated["PCS"] == 0]
+
+                if len(zero_pcs_df) > 0:
+                    st.error(f"⚠️ **注意：检测到共有 {len(zero_pcs_df)} 条记录的 PCS 为 0（未匹配到采购单或单箱数量为0）！**")
+                    tab_zero, tab_all, tab_summary = st.tabs([
+                        f"🚨 PCS为0的异常记录 ({len(zero_pcs_df)} 条)", 
+                        "📄 查看完整发货单明细", 
+                        "📊 查看货件汇总表"
+                    ])
+                    with tab_zero:
+                        st.dataframe(zero_pcs_df, use_container_width=True)
+                    with tab_all:
+                        st.dataframe(delivery_updated, use_container_width=True)
+                    with tab_summary:
+                        st.dataframe(summary_data, use_container_width=True)
+                else:
+                    st.success("🎉 **处理完毕！所有 SKU 均已正常匹配，未发现 PCS 为 0 的异常。**")
 
             except Exception as e:
                 status.update(label=f"❌ 处理出错：{str(e)}", state="error")
