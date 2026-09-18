@@ -125,8 +125,8 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
 
 # ==================== 主界面 ====================
 def main():
-    st.title("📦 货件 PCS 计算与汇总工具")
-    st.caption("上传发货单 Excel，自动同步云端采购单数据并实时生成汇总表。")
+    st.title("📦 货件 PCS 计算工具")
+    st.caption("上传发货单 Excel")
     st.divider()
 
     # 1. 上传文件（上传后自动执行）
