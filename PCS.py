@@ -185,7 +185,7 @@ def main():
                     st.error(f"❌ 连接失败：{str(ex)}")
 
     # 主体布局：分为两步
-    col_left, col_right = st.columns()
+    col_left, col_right = st.columns(2)
 
     with col_left:
         st.subheader("1. 云端采购单状态")
